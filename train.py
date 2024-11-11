@@ -11,7 +11,7 @@ torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.enabled = True
 # Argparser
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str, default='/dataset/raw/')
+parser.add_argument('--dataset', type=str, default='D:\Gazenetface\MPIIFaceGaze\MPIIFaceGaze')
 parser.add_argument('--resume', type=str, default=None)
 parser.add_argument('--log_path', type=str, default='training.log')
 parser.add_argument('--output', '-o', type=str, default='.')

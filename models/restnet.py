@@ -2,42 +2,33 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
-from torchvision.models import MobileNet_V2_Weights
-from torchvision.ops.misc import Conv2dNormActivation
-
-
-import numpy as np 
-
-from PIL import Image
 from torchvision import transforms
+import numpy as np
+from PIL import Image
 
 class GazeNet(nn.Module):
-
-    def __init__(self, device):    
+    def __init__(self, device):
         super(GazeNet, self).__init__()
         self.device = device
         self.preprocess = transforms.Compose([
-            transforms.Resize((112,112)),
+            transforms.Resize((224, 224)),  # ResNet typically expects 224x224
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
 
+        # Load ResNet as backbone
+        model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
         
-        #lightweight CNN often used for image classification on edge device
-        model = models.mobilenet_v2(weights=MobileNet_V2_Weights.DEFAULT)
-        #The model.features[-1] layer is replaced with a custom Conv2dNormActivation layer to adjust the final feature dimensions to 256 channels.
-        model.features[-1] = Conv2dNormActivation(320, 256, kernel_size=1)
-        self.backbone = model.features
+        # Extract features up to the last layer before fully connected
+        self.backbone = nn.Sequential(*list(model.children())[:-2])
 
-        #Three convolutional layers (Conv1, Conv2, Conv3) are added after the backbone.
-        self.Conv1 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=1, stride=1, padding=0)
+        # Modify custom layers based on ResNet output dimensions
+        self.Conv1 = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=1, stride=1, padding=0)
         self.Conv2 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=1, stride=1, padding=0)
         self.Conv3 = nn.Conv2d(in_channels=256, out_channels=1, kernel_size=1, stride=1, padding=0)
 
-        #The network uses two fully connected (FC) layers (fc1, fc2) and a final output layer (fc_final)
-        #  for the gaze classification.
         self.fc1 = nn.Sequential(
-            nn.Linear(256*4*4, 512),
+            nn.Linear(256*7*7, 512),  # Adjust this dimension based on ResNet's output shape
             nn.ReLU(),
             nn.Dropout(0.5)
         )
@@ -46,14 +37,11 @@ class GazeNet(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.5)
         )
-        #he final layer (fc_final) outputs a 2-dimensional vector,
-        #which can represent the gaze direction in two classes (e.g., inside vs. outside the screen).
         self.fc_final = nn.Linear(512, 2)
 
         self._initialize_weight()
         self._initialize_bias()
         self.to(device)
-
 
     def _initialize_weight(self):
         nn.init.normal_(self.Conv1.weight, mean=0.0, std=0.01)
@@ -66,12 +54,11 @@ class GazeNet(nn.Module):
         nn.init.constant_(self.Conv3.bias, val=1)
 
     def forward(self, x):
-        
         x = self.backbone(x)
         y = F.relu(self.Conv1(x))
         y = F.relu(self.Conv2(y))
         y = F.relu(self.Conv3(y))
-        
+
         x = F.dropout(F.relu(torch.mul(x, y)), 0.5)
         x = x.view(x.size(0), -1)
         x = self.fc1(x)
@@ -82,6 +69,6 @@ class GazeNet(nn.Module):
 
     def get_gaze(self, img):
         img = Image.fromarray(img)
-        img = self.preprocess(img)[np.newaxis,:,:,:]
+        img = self.preprocess(img)[np.newaxis, :, :, :]
         x = self.forward(img.to(self.device))
         return x
